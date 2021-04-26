@@ -1,0 +1,133 @@
+---
+title: "TidyGrow"
+author: "Dustin Haraden"
+date: "4/22/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(broom)
+library(lavaan)
+```
+
+
+#Data Frame for fit stats
+```{r}
+#Function
+tidy_grow <- function(model, title, location=NULL){
+  modelframe <- as.data.frame(fitmeasures(model, c("cfi","srmr","rmsea", "aic","bic", "chisq", "df", "pvalue")))
+  names(modelframe)[1]<- `title`
+  modelframe$index <- NA
+  modelframe[1,2]<-"CFI"
+  modelframe[2,2]<-"SRMR"
+  modelframe[3,2]<-"RMSEA"
+  modelframe[4,2]<-"AIC"
+  modelframe[5,2]<-"BIC"
+  modelframe[6,2]<-"Chi-square"
+  modelframe[7,2]<-"df"
+  modelframe[8,2]<-"p-value"
+  finalframe <- modelframe %>% 
+    mutate_if(is.numeric, ~round(.,2)) %>% 
+    select(index, `title`) 
+  return(finalframe)
+}
+
+```
+
+
+```{r Table of Model Parameters, eval=F, include=F}
+
+res.ng <- tidy(qg.epds.fit)
+
+
+
+#Create df to reflect just estimates
+est <- res.ng %>%
+  filter(std.error>0) %>%
+  #filter(!grepl('EPDS_', term)) %>%
+  filter(!grepl('~~',term)) %>% #this is the line that evaluates the op variable
+  select(term, estimate, std.error, p.value, std.all)
+
+#create df to reflect only variance/covariance
+var <- res.ng %>%
+  filter(std.error>0) %>%
+  #filter(!grepl('EPDS', term)) %>%
+  filter(grepl('~~', term)) %>%
+  select(term, estimate, std.error, p.value, std.all) %>% 
+  slice(4:6) #linear 2:3, quadratic 4:6
+
+res.ng <- bind_cols(est,var) %>%
+  select(term...1, estimate...2, std.error...3, std.all...5, p.value...4,
+         estimate...7, p.value...9) %>%
+  mutate_if(is.numeric, ~round(.,3)) 
+
+
+
+
+
+rownames(res.ng) <- c('Intercept', 'Linear Slope', 'Quadratic Slope')
+
+res.ng <- rownames_to_column(res.ng) %>%
+  select(-term...1) %>% 
+  as.data.frame()
+
+names(res.ng) <- c(' ', 'Estimate', 'Std. Error', 'Std. Est.', 'p-value', 
+                   'Variance','p-value ')
+
+#Updating p-values that are less than .001
+for(i in 1:nrow(res.ng)){
+  if(res.ng[i,5]==0){
+    res.ng[i,5] <- '<.001'
+  }
+}
+
+for(i in 1:nrow(res.ng)){
+  if(res.ng[i,7]==0){
+    res.ng[i,7] <- '<.001'
+  }
+}
+
+
+#View(res.ng)
+
+tab_df(res.ng, title='Table 2 - Quadratic Growth Estimates',
+       file='FiguresTables/QuadGrowth_Table2.html')
+
+```
+
+#Creating Prototypical Growth
+```{r ProtoGrow}
+
+#Pull out predicted values from the fit model
+test <- as.data.frame(lavPredict(qg.epds.fit)) %>% 
+  rownames_to_column("ID")
+
+#augment dataset to have indidual data points at each time
+test <- test %>% 
+  mutate(T1 = int, 
+         T2 = int + lin_slope + quad_slope, 
+         T3 = int + (lin_slope*2) + (quad_slope*4), 
+         T4 = int + (lin_slope*3) + (quad_slope*9)) %>% 
+  gather(Time, epds, T1:T4)
+
+#setting these so they make sense when plotting
+test$Time <- as.numeric(as.factor(test$Time))
+test$ID <- as.numeric(as.factor(test$ID))
+  
+#Plotting
+ggplot(test, aes(x = Time, 
+                 y = epds)) + 
+  #geom_point(aes(group = ID, 
+  #               col=as.factor(ID))) +
+  geom_line(aes(group = ID), 
+            alpha = .3) + 
+  geom_smooth(method = 'lm',
+              formula = y ~ x + I(x^2), #<- specifying the formula to use
+              size = 2) +
+  theme(legend.position = 'none') + 
+  #coord_cartesian(ylim=c(4.5,8.5)) +
+  theme_classic()
+
+```
+
